@@ -34,7 +34,7 @@ with st.expander("📘 How Runners Poker Works"):
 
 Your fitness category applies a multiplier on top of Equal Mode:
 
-- **Non-runner** → ×0.6  
+- **Couch Potato** → ×0.6  
 - **Beginner** → ×0.8  
 - **Casual** → ×1.0  
 - **Regular** → ×1.2  
@@ -72,6 +72,27 @@ mode_equal = mode.startswith("Equal")
 mode_weighted = mode.startswith("Weighted")
 mode_custom = mode.startswith("Custom")
 
+# Forfeit type (one per game)
+forfeit_type = st.selectbox(
+    "Forfeit type",
+    [
+        "Run (km)",
+        "Cycle (km)",
+        "Burpees (reps)",
+        "Steps (x1000)",
+    ],
+    index=0,
+    help="What kind of punishment is this game using?"
+)
+
+# How to describe the units and action in the summary
+FORFEIT_TYPE_CONFIG = {
+    "Run (km)": {"unit": "km", "activity": "run"},
+    "Cycle (km)": {"unit": "km", "activity": "cycle"},
+    "Burpees (reps)": {"unit": "burpees", "activity": None},
+    "Steps (x1000)": {"unit": "k steps", "activity": None},
+}
+
 # 2) Starting chips (always needed)
 col1, col2 = st.columns(2)
 with col1:
@@ -86,8 +107,14 @@ with col1:
 # 3) Max distance only for Equal + Weighted
 with col2:
     if mode_equal or mode_weighted:
+        cfg_forfeit = FORFEIT_TYPE_CONFIG.get(
+            forfeit_type,
+            {"unit": "units", "activity": None}
+        )
+        unit_label = cfg_forfeit["unit"]
+
         max_km = st.number_input(
-            "Max forfeit distance (km)",
+            f"Max forfeit ({unit_label})",
             min_value=0.1,
             value=10.0,
             step=0.5,
@@ -95,7 +122,7 @@ with col2:
         )
     else:
         max_km = None
-        st.info("Custom Mode: each player will set their own max distance in the next step.")
+        st.info("Custom Mode: each player will set their own max punishment in the next step.")
 
 num_players_input = st.number_input(
     "Number of players",
@@ -109,16 +136,16 @@ num_players = int(num_players_input)
 # Pick the deadline date
 completion_date = st.date_input(
     "Select the deadline for completing the forfeits",
-    help="Players must finish their punishment run(s) by this date."
+    help="Players must finish their punishment(s) by this date."
 )
 
 st.markdown("---")
 st.markdown("### 2. Players & Settings")
 
 # Fitness categories & multipliers
-fitness_categories = ["Non-runner", "Beginner", "Casual", "Regular", "Athlete"]
+fitness_categories = ["Couch Potato", "Beginner", "Casual", "Regular", "Athlete"]
 multipliers = {
-    "Non-runner": 0.6,
+    "Couch Potato": 0.6,
     "Beginner": 0.8,
     "Casual": 1.0,
     "Regular": 1.2,
@@ -152,8 +179,14 @@ for i in range(num_players):
 
     elif mode_custom:
         with c2:
+            cfg_forfeit = FORFEIT_TYPE_CONFIG.get(
+                forfeit_type,
+                {"unit": "units", "activity": None}
+            )
+            unit_label = cfg_forfeit["unit"]
+
             max_km_player = st.number_input(
-                f"Max distance for {name} (km)",
+                f"Max forfeit for {name} ({unit_label})",
                 min_value=0.1,
                 value=10.0,
                 step=0.5,
@@ -200,6 +233,13 @@ if st.button("Calculate forfeits 🚀"):
                 "We’ll still calculate forfeits as normal. 💸🎴"
             )
 
+    # Configure unit labels for the table + summary
+    cfg = FORFEIT_TYPE_CONFIG.get(forfeit_type, {"unit": "units", "activity": None})
+    unit = cfg["unit"]
+    activity = cfg["activity"]
+    forfeit_col_name = f"Forfeit ({unit})"
+    player_max_col_name = f"Player max ({unit})"
+
     # Compute forfeits
     rows = []
     for p in players:
@@ -237,17 +277,17 @@ if st.button("Calculate forfeits 🚀"):
                     "Fitness category": p.get("fitness", "-"),
                     "Final chips": chips,
                     "Chip % of start": round(chip_ratio * 100, 1),
-                    "Forfeit (km)": round(forfeit_km, 2),
+                    forfeit_col_name: (int(round(forfeit_km, 2)) if float(round(forfeit_km, 2)).is_integer() else round(forfeit_km, 2)),
                 }
             )
         elif mode_custom:
             rows.append(
                 {
                     "Player": p["name"],
-                    "Player max km": round(p.get("max_km", 10.0), 2),
+                    player_max_col_name: (int(round(p.get("max_km", 10.0), 2)) if float(round(p.get("max_km", 10.0), 2)).is_integer() else round(p.get("max_km", 10.0), 2)),
                     "Final chips": chips,
                     "Chip % of start": round(chip_ratio * 100, 1),
-                    "Forfeit (km)": round(forfeit_km, 2),
+                    forfeit_col_name: (int(round(forfeit_km, 2)) if float(round(forfeit_km, 2)).is_integer() else round(forfeit_km, 2)),
                 }
             )
         else:  # Equal
@@ -256,7 +296,7 @@ if st.button("Calculate forfeits 🚀"):
                     "Player": p["name"],
                     "Final chips": chips,
                     "Chip % of start": round(chip_ratio * 100, 1),
-                    "Forfeit (km)": round(forfeit_km, 2),
+                    forfeit_col_name: (int(round(forfeit_km, 2)) if float(round(forfeit_km, 2)).is_integer() else round(forfeit_km, 2)),
                 }
             )
 
@@ -266,17 +306,37 @@ if st.button("Calculate forfeits 🚀"):
     st.dataframe(df, width="stretch")
 
     st.markdown("#### Summary")
+
     for r in rows:
-        km = r["Forfeit (km)"]
-        if km == 0:
-            st.write(
-                f"**{r['Player']}** → 🎉 **No run required!** (0 km)"
-            )
+        amount = r[forfeit_col_name]
+        if amount == 0:
+            if activity:
+                st.write(
+                    f"**{r['Player']}** → 🎉 **No {activity} required!** (0 {unit})"
+                )
+            else:
+                st.write(
+                    f"**{r['Player']}** → 🎉 **No {unit} required!** (0 {unit})"
+                )
         else:
-            st.write(
-                f"**{r['Player']}** → {km} km to run "
-                f"by **{completion_date.strftime('%d %b %Y')}**."
-            )
+            if activity:
+                st.write(
+                    f"**{r['Player']}** → {amount} {unit} to {activity} "
+                    f"by **{completion_date.strftime('%d %b %Y')}**."
+                )
+            else:
+                st.write(
+                    f"**{r['Player']}** → {amount} {unit} "
+                    f"by **{completion_date.strftime('%d %b %Y')}**."
+                )
+
+    # New game / reset button
+    if st.button("🔄 New game / reset"):
+        # Rerun the app to clear all inputs and start fresh
+        try:
+            st.rerun()
+        except AttributeError:
+            st.experimental_rerun()
 
     st.markdown("---")
 
